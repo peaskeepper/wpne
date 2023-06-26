@@ -1,0 +1,250 @@
+import tkinter as tk
+from tkinter import ttk
+from tkinter import filedialog, messagebox
+from tkinter.ttk import Progressbar
+from openpyxl import Workbook
+import time
+import pandas as pd
+import requests
+import re
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+import threading
+import random
+
+
+def introduce_delay(delay_seconds):
+    time.sleep(delay_seconds)
+
+
+# Regular expression patterns for different phone number formats
+phone_number_patterns = [
+    r"\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b",  # XXX-XXX-XXXX or XXX.XXX.XXXX or XXX XXX XXXX
+    r"\b\(\d{3}\)\s?\d{3}[-.\s]?\d{4}\b",  # (XXX) XXX-XXXX or (XXX)XXX-XXXX or (XXX) XXX.XXXX
+    r"\b\+\d{1,2}\s?\(\d{3}\)\s?\d{3}[-.\s]?\d{4}\b",  # +XX (XXX) XXX-XXXX or +XX(XXX)XXX-XXXX or +XX (XXX) XXX.XXXX
+]
+
+# Toll-free number pattern
+toll_free_pattern = (
+    r"\b1-8\d{2}-\d{3}-\d{4}\b"  # 1-800-XXX-XXXX or 1-888-XXX-XXXX or 1-877-XXX-XXXX
+)
+
+# Global variables
+processing_paused = False
+
+
+# Function to extract phone numbers from a given text with the same format as the website phone numbers
+def extract_phone_numbers(text):
+    phone_numbers = []
+    for pattern in phone_number_patterns:
+        matches = re.findall(pattern, text)
+        for match in matches:
+            formatted_match = re.sub(r"\D", "", match)  # Remove non-digit characters
+            phone_numbers.append(formatted_match)
+    return phone_numbers
+
+
+# Function to process the websites file and generate the results file
+def process_websites():
+    # Get the path of the websites file
+    websites_file = filedialog.askopenfilename(filetypes=[("Excel Files", "*.xlsx")])
+    if not websites_file:
+        return
+
+    try:
+        # Load the data from the "Sheet1" sheet
+        df = pd.read_excel(websites_file, sheet_name="Sheet1")
+        websites = df["Website"].tolist()
+
+        # Create a new workbook and sheet for results
+        wb = Workbook()
+        sheet = wb.active
+
+        # Set the headers
+        sheet["A1"] = "Website"
+        sheet["B1"] = "Phone Number"
+        sheet["C1"] = "Source Page"
+
+        # Calculate total number of websites for progress bar
+        total_websites = len(websites)
+
+        # Process each website
+        for row, website in enumerate(websites, start=2):
+            if pd.isna(website) or not isinstance(website, str):
+                # Skip rows with missing or non-string website values
+                continue
+
+            if processing_paused:
+                # Wait for the resume signal
+                while processing_paused:
+                    window.update()
+
+            try:
+                # Check if the URL is missing the scheme
+                parsed_url = urlparse(website)
+                if not parsed_url.scheme:
+                    website = f"https://{website}"
+
+                # Send a GET request to the website
+                response = requests.get(website)
+                response.raise_for_status()
+
+                # Parse the HTML content
+                soup = BeautifulSoup(response.content, "html.parser")
+
+                # Find all phone numbers within the HTML content
+                html_content = soup.get_text()
+                phone_numbers = extract_phone_numbers(html_content)
+
+                # Filter out toll-free numbers
+                phone_numbers = [
+                    number
+                    for number in phone_numbers
+                    if not re.match(toll_free_pattern, number)
+                ]
+
+                # Randomized delay
+                delay_seconds = random.randint(1, user_delay)
+                introduce_delay(delay_seconds)
+
+                # Write the website, phone number, and source page to the sheet
+                sheet.cell(row=row, column=1).value = website
+                sheet.cell(row=row, column=2).value = ", ".join(phone_numbers)
+                sheet.cell(row=row, column=3).value = response.url
+
+                # Update progress bar
+                progress_var.set(row * 100 // total_websites)
+                website_var.set(f"Website: {website}")
+                phone_var.set(f"Fetched Phone Number(s): {', '.join(phone_numbers)}")
+                window.update()
+
+            except requests.exceptions.RequestException as e:
+                # Handle any errors that occurred during the request
+                print(f"Error processing website {row-1}/{total_websites}: {website}")
+                print(f"Error details: {e}")
+
+        # Save the results file
+        results_file = filedialog.asksaveasfilename(
+            defaultextension=".xlsx", filetypes=[("Excel Files", "*.xlsx")]
+        )
+        if results_file:
+            wb.save(results_file)
+            messagebox.showinfo("Success", "Results file saved successfully!")
+
+    except Exception as e:
+        messagebox.showerror("Error", str(e))
+
+    # Close the workbook
+    wb.close()
+
+
+# Function to pause the processing
+def pause_processing():
+    global processing_paused
+    processing_paused = True
+
+
+# Function to resume the processing
+def resume_processing():
+    global processing_paused
+    processing_paused = False
+
+
+# Create the main window
+window = tk.Tk()
+window.title("WPNE 1.1")
+
+# Create a progress bar
+progress_var = tk.IntVar()
+progress_bar = Progressbar(
+    window, length=300, mode="determinate", variable=progress_var
+)
+
+# Create labels for website and fetched phone number
+website_var = tk.StringVar()
+phone_var = tk.StringVar()
+website_label = tk.Label(
+    window, textvariable=website_var, fg="blue", bg="white", font=("Arial", 14, "bold")
+)
+phone_label = tk.Label(
+    window, textvariable=phone_var, fg="green", bg="white", font=("Arial", 14, "bold")
+)
+
+
+# Create a custom style for buttons
+button_style = ttk.Style()
+button_style.configure(
+    "Custom.TButton",
+    background="white",
+    foreground="black",
+    font=("Arial", 12, "bold"),
+    width=30,  # Increase the width value to make the buttons wider
+    padding=10,
+)
+
+# Create buttons
+upload_button = ttk.Button(
+    window,
+    text="Upload Websites File",
+    command=process_websites,
+    style="Custom.TButton",
+)
+pause_button = ttk.Button(
+    window, text="Pause", command=pause_processing, style="Custom.TButton"
+)
+resume_button = ttk.Button(
+    window, text="Resume", command=resume_processing, style="Custom.TButton"
+)
+download_button = ttk.Button(
+    window, text="Download Results File", style="Custom.TButton"
+)
+
+
+# Create a label and entry for user-specified delay
+delay_label = tk.Label(
+    window, text="Delay in seconds (1 to n):", font=("Arial", 12, "bold")
+)
+delay_entry = tk.Entry(window, font=("Arial", 12))
+
+
+# Function to start the application
+def start_application():
+    delay = delay_entry.get()
+    if delay.isdigit() and int(delay) > 0:
+        global user_delay
+        user_delay = int(delay)
+        upload_button.configure(state="enabled")
+        delay_entry.configure(state="disabled")
+        start_button.configure(state="disabled")
+        pause_button.configure(state="enabled")
+        resume_button.configure(state="enabled")
+    else:
+        messagebox.showerror("Error", "Invalid delay value!")
+
+
+# Create a button to start the application
+start_button = ttk.Button(
+    window, text="Start Application", command=start_application, style="Custom.TButton"
+)
+
+
+# Add widgets to the window
+progress_bar.grid(row=0, columnspan=2, pady=10)
+website_label.grid(row=1, columnspan=2, pady=10)
+phone_label.grid(row=2, columnspan=2, pady=10)
+delay_label.grid(row=3, column=0, padx=10, pady=10, sticky="E")
+delay_entry.grid(row=3, column=1, padx=10, pady=10, sticky="W")
+start_button.grid(row=4, columnspan=2, pady=10)
+upload_button.grid(row=5, columnspan=2, pady=10)
+pause_button.grid(row=6, column=0, padx=10, pady=10, sticky="E")
+resume_button.grid(row=6, column=1, padx=10, pady=10, sticky="W")
+download_button.grid(row=7, columnspan=2, pady=10)
+
+# Disable buttons initially
+upload_button.configure(state="disabled")
+pause_button.configure(state="disabled")
+resume_button.configure(state="disabled")
+download_button.configure(state="disabled")
+
+# Run the main window loop
+window.mainloop()
