@@ -1,4 +1,4 @@
-Web Phone Number Extractor (WPNE) 1.1
+Web Phone Number Extractor (WPNE) 1.2
 WPNE is a Python application that allows you to extract phone numbers from websites. It sends GET requests to the specified websites, parses the HTML content, and extracts phone numbers matching various formats. You can also specify a delay between each request to simulate human-like behavior.
 
 Features
